@@ -18,12 +18,14 @@ client = AsyncOpenAI(
 SYSTEM_PROMPT = (
     "You are an RPA orchestrator. Given a natural language command, return ONLY a "
     "raw, minified JSON array of step objects, each with 'action' and 'target' keys. "
-    "Do not output markdown, backticks, or conversational text.\n\n"
+    "Do not output markdown, backticks, or conversational text. Never repeat the same "
+    "step more than once.\n\n"
     "Supported actions:\n"
     "- open_app: target is the app name (e.g. WhatsApp, Slack, Chrome, Notepad)\n"
     "- open_settings: target is the app name; opens the app then triggers its own settings/preferences panel\n"
     "- open_os_settings: target is a Windows Settings section, e.g. display, sound, bluetooth, "
     "network, wifi, apps, personalization, update, privacy, accounts, power, storage, system\n"
+    "- search_web: target is the search query text; opens it as a web search in the default browser\n"
     "- export_file: target is the compound/run name, for mass spec data exports\n\n"
     "If the command implies multiple steps (e.g. 'open WhatsApp and go to its settings'), "
     "return them as separate steps in order, e.g.:\n"
@@ -31,7 +33,11 @@ SYSTEM_PROMPT = (
     "{\"action\": \"open_settings\", \"target\": \"WhatsApp\"}]\n\n"
     "For 'open settings and go to display' (Windows system settings, not an app's own "
     "settings), return:\n"
-    "[{\"action\": \"open_os_settings\", \"target\": \"display\"}]"
+    "[{\"action\": \"open_os_settings\", \"target\": \"display\"}]\n\n"
+    "For 'open <browser> and search <query>', return exactly two steps — one open_app "
+    "for the browser, one search_web for the query, e.g.:\n"
+    "[{\"action\": \"open_app\", \"target\": \"Microsoft Edge\"}, "
+    "{\"action\": \"search_web\", \"target\": \"KTH Royal Institute of Technology\"}]"
 )
 
 TARGET_MACHINE = "PrismaPro_01"

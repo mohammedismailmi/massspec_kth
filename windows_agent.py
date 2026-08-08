@@ -2,6 +2,9 @@ import asyncio
 import json
 import os
 import subprocess
+import urllib.parse
+import webbrowser
+import winreg
 import websockets
 
 # ---------------------------------------------------------------------------
@@ -33,10 +36,12 @@ SETTINGS_URI_MAP = {
 }
 
 # Common apps: name -> executable/command Windows can resolve directly.
-# Add to this as you test more apps. For Store (UWP) apps like WhatsApp
-# installed via Microsoft Store, plain os.startfile(exe) usually won't work —
-# those need a shell:AppsFolder\<AppUserModelId> path instead; flag this if
-# you hit it and we'll add proper UWP resolution.
+# Bare names like "chrome" aren't on PATH by default on Windows, so
+# resolve_app_target() falls back to the registry's App Paths key (the same
+# mechanism Windows itself uses to resolve app names) when a name isn't here.
+# For Store (UWP) apps like WhatsApp installed via Microsoft Store, this
+# won't work — those need a shell:AppsFolder\<AppUserModelId> path instead;
+# flag it if you hit it and we'll add proper UWP resolution.
 APP_MAP = {
     "notepad": "notepad.exe",
     "calculator": "calc.exe",
@@ -44,15 +49,35 @@ APP_MAP = {
     "explorer": "explorer.exe",
     "file explorer": "explorer.exe",
     "settings": "ms-settings:",
-    "chrome": "chrome",
-    "edge": "msedge",
+    "chrome": "chrome.exe",
+    "google chrome": "chrome.exe",
+    "edge": "msedge.exe",
+    "microsoft edge": "msedge.exe",
     "task manager": "taskmgr.exe",
     "control panel": "control.exe",
 }
 
 
+def resolve_via_app_paths(exe_name: str) -> str | None:
+    """Look up an exe's real install path via the registry, the same way
+    Windows itself resolves app names (Start menu, Win+R, etc.)."""
+    if not exe_name.lower().endswith(".exe"):
+        exe_name += ".exe"
+    key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key_path) as key:
+                path, _ = winreg.QueryValueEx(key, None)
+                return path
+        except FileNotFoundError:
+            continue
+    return None
+
+
 def resolve_app_target(name: str) -> str:
-    return APP_MAP.get(name.strip().lower(), name.strip())
+    mapped = APP_MAP.get(name.strip().lower(), name.strip())
+    resolved = resolve_via_app_paths(mapped)
+    return resolved or mapped
 
 
 def start(target: str) -> tuple[bool, str]:
@@ -90,9 +115,25 @@ def open_os_settings(section: str) -> tuple[bool, str]:
     return True, f"Opened Settings > {section}"
 
 
+def search_web(query: str) -> tuple[bool, str]:
+    """Opens the query as a Google search in the OS default browser.
+    Note: uses whatever browser is set as default, not necessarily one
+    just opened by a prior open_app step — set your default browser to
+    match if you want them to always be the same."""
+    if not query.strip():
+        return False, "No search query provided"
+    url = "https://www.google.com/search?q=" + urllib.parse.quote(query.strip())
+    try:
+        webbrowser.open(url)
+        return True, f"Searched '{query}' in default browser"
+    except Exception as e:
+        return False, f"Could not open search: {e}"
+
+
 ACTIONS = {
     "open_app": open_app,
     "open_os_settings": open_os_settings,
+    "search_web": search_web,
 }
 
 
