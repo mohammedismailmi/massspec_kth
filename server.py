@@ -9,10 +9,10 @@ load_dotenv()
 
 app = FastAPI()
 
-# Configure the SDK to route to Grok instead of OpenAI
+# Configure the SDK to route to Groq instead of OpenAI
 client = AsyncOpenAI(
-    api_key=os.getenv("XAI_API_KEY"),
-    base_url="https://api.x.ai/v1"
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
 )
 
 SYSTEM_PROMPT = (
@@ -74,7 +74,7 @@ async def client_endpoint(websocket: WebSocket):
 
             # 1. Ask Grok to parse the intent into strict JSON
             response = await client.chat.completions.create(
-                model="grok-beta",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": command},
