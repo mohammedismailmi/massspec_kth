@@ -39,9 +39,8 @@ SETTINGS_URI_MAP = {
 # Bare names like "chrome" aren't on PATH by default on Windows, so
 # resolve_app_target() falls back to the registry's App Paths key (the same
 # mechanism Windows itself uses to resolve app names) when a name isn't here.
-# For Store (UWP) apps like WhatsApp installed via Microsoft Store, this
-# won't work — those need a shell:AppsFolder\<AppUserModelId> path instead;
-# flag it if you hit it and we'll add proper UWP resolution.
+# Store (UWP) apps like WhatsApp have no plain .exe — open_app() falls back
+# further to resolve_uwp_app_id() (PowerShell's Get-StartApps) for those.
 APP_MAP = {
     "notepad": "notepad.exe",
     "calculator": "calc.exe",
@@ -58,26 +57,29 @@ APP_MAP = {
 }
 
 
-def resolve_via_app_paths(exe_name: str) -> str | None:
-    """Look up an exe's real install path via the registry, the same way
-    Windows itself resolves app names (Start menu, Win+R, etc.)."""
-    if not exe_name.lower().endswith(".exe"):
-        exe_name += ".exe"
-    key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}"
-    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-        try:
-            with winreg.OpenKey(hive, key_path) as key:
-                path, _ = winreg.QueryValueEx(key, None)
-                return path
-        except FileNotFoundError:
-            continue
-    return None
-
-
 def resolve_app_target(name: str) -> str:
     mapped = APP_MAP.get(name.strip().lower(), name.strip())
     resolved = resolve_via_app_paths(mapped)
     return resolved or mapped
+
+
+def resolve_uwp_app_id(name: str) -> str | None:
+    """Find a Microsoft Store (UWP) app's AppUserModelID via PowerShell's
+    Get-StartApps — the same catalog the Start Menu searches. Needed for
+    apps like WhatsApp, Spotify (Store version), etc. that have no plain .exe."""
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                f"(Get-StartApps | Where-Object {{ $_.Name -like '*{name}*' }} "
+                "| Select-Object -First 1 -ExpandProperty AppID)",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        app_id = result.stdout.strip()
+        return app_id or None
+    except Exception:
+        return None
 
 
 def start(target: str) -> tuple[bool, str]:
@@ -95,7 +97,19 @@ def start(target: str) -> tuple[bool, str]:
 
 
 def open_app(name: str) -> tuple[bool, str]:
-    return start(resolve_app_target(name))
+    ok, msg = start(resolve_app_target(name))
+    if ok:
+        return ok, msg
+
+    # Fallback: might be a Microsoft Store app with no plain .exe
+    app_id = resolve_uwp_app_id(name)
+    if app_id:
+        ok2, msg2 = start(f"shell:appsFolder\\{app_id}")
+        if ok2:
+            return True, f"Launched {name} (Store app)"
+        return False, msg2
+
+    return False, msg
 
 
 def open_os_settings(section: str) -> tuple[bool, str]:
