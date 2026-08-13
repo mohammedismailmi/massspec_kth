@@ -57,6 +57,22 @@ APP_MAP = {
 }
 
 
+def resolve_via_app_paths(exe_name: str) -> str | None:
+    """Look up an exe's real install path via the registry, the same way
+    Windows itself resolves app names (Start menu, Win+R, etc.)."""
+    if not exe_name.lower().endswith(".exe"):
+        exe_name += ".exe"
+    key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key_path) as key:
+                path, _ = winreg.QueryValueEx(key, None)
+                return path
+        except FileNotFoundError:
+            continue
+    return None
+
+
 def resolve_app_target(name: str) -> str:
     mapped = APP_MAP.get(name.strip().lower(), name.strip())
     resolved = resolve_via_app_paths(mapped)
