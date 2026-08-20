@@ -2,10 +2,12 @@ import asyncio
 import json
 import os
 import subprocess
+import time
 import urllib.parse
 import webbrowser
 import winreg
 import websockets
+from pywinauto import Application
 
 # ---------------------------------------------------------------------------
 # IMPORTANT: when this runs inside a UTM Windows VM and the FastAPI server
@@ -13,7 +15,7 @@ import websockets
 # Replace SERVER_HOST below with your Mac's LAN IP (System Settings > Wi-Fi/
 # Network > Details, or run `ipconfig getifaddr en0` in Mac Terminal).
 # ---------------------------------------------------------------------------
-SERVER_HOST = "192.168.1.2"  # <-- change to e.g. "192.168.64.1" or your Mac's LAN IP
+SERVER_HOST = "localhost"  # <-- change to e.g. "192.168.64.1" or your Mac's LAN IP
 URI = f"ws://{SERVER_HOST}:8000/ws/agent/PrismaPro_01"
 
 # Windows Settings app deep-links (ms-settings: URI scheme).
@@ -166,17 +168,130 @@ ACTIONS = {
     "search_web": search_web,
 }
 
+WHATSAPP_SEARCH_AUTO_ID = "_r_c_"  # found via inspect_whatsapp_v4.py — stable even as text changes
+
+# pywinauto's type_keys() treats these as special-key syntax (SendKeys-style).
+# Wrap each in braces so they're typed as literal characters instead.
+_TYPE_KEYS_SPECIAL = set("+^%~(){}")
+
+
+def _escape_for_type_keys(text: str) -> str:
+    return "".join(f"{{{ch}}}" if ch in _TYPE_KEYS_SPECIAL else ch for ch in text)
+
+
+def _connect_whatsapp(retries: int = 5, delay: float = 1.0):
+    """WhatsApp may still be launching (e.g. right after open_app), so retry
+    briefly instead of failing on the first missed connection."""
+    last_error = None
+    for _ in range(retries):
+        try:
+            app = Application(backend="uia").connect(title_re=".*WhatsApp.*", timeout=5)
+            return app.top_window()
+        except Exception as e:
+            last_error = e
+            time.sleep(delay)
+    raise RuntimeError(f"Could not connect to WhatsApp after {retries} attempts: {last_error}")
+
+
+def whatsapp_send_message(contact: str, message: str) -> tuple[bool, str]:
+    if not contact.strip():
+        return False, "No contact name provided"
+    if not message.strip():
+        return False, "No message text provided"
+
+    try:
+        window = _connect_whatsapp()
+    except Exception as e:
+        return False, str(e)
+
+    window.set_focus()
+
+    # 1. Focus the search box (by auto_id, not name — its name changes as you type)
+    try:
+        search_box = window.child_window(auto_id=WHATSAPP_SEARCH_AUTO_ID, control_type="Edit")
+        search_box.click_input()
+        search_box.type_keys("^a{BACKSPACE}", pause=0.05)  # clear any existing text
+        search_box.type_keys(_escape_for_type_keys(contact), with_spaces=True, pause=0.03)
+    except Exception as e:
+        return False, f"Could not use the search box: {e}"
+
+    time.sleep(1.2)  # let search results render
+
+    # 2. Click the first search result whose visible name contains the contact name
+    try:
+        result_btn = None
+        for ctrl in window.descendants(control_type="Button"):
+            try:
+                if not ctrl.is_visible():
+                    continue
+                name = ctrl.window_text()
+            except Exception:
+                continue
+            if contact.strip().lower() in name.lower():
+                result_btn = ctrl
+                break
+        if result_btn is None:
+            return False, f"No search result found matching '{contact}'"
+        result_btn.click_input()
+    except Exception as e:
+        return False, f"Could not click the search result: {e}"
+
+    time.sleep(1.0)  # let the chat open
+
+    # 3. The message box is the only OTHER visible Edit control (the search
+    # box is excluded by auto_id) — found via inspect_whatsapp_v4.py, it has
+    # no accessible name of its own.
+    try:
+        message_box = None
+        for ctrl in window.descendants(control_type="Edit"):
+            try:
+                if ctrl.automation_id() == WHATSAPP_SEARCH_AUTO_ID:
+                    continue
+                if not ctrl.is_visible():
+                    continue
+                message_box = ctrl
+                break
+            except Exception:
+                continue
+        if message_box is None:
+            return False, "Could not find the message box — is the chat actually open?"
+        message_box.click_input()
+    except Exception as e:
+        return False, f"Could not focus the message box: {e}"
+
+    # 4. Type the message and press Enter to send (WhatsApp has no separate
+    # Send button until you've typed something, so Enter is the reliable path)
+    try:
+        message_box.type_keys(_escape_for_type_keys(message), with_spaces=True, pause=0.02)
+        time.sleep(0.2)
+        message_box.type_keys("{ENTER}")
+    except Exception as e:
+        return False, f"Could not type/send the message: {e}"
+
+    return True, f"Sent message to '{contact}'"
+
 
 async def execute_step(step: dict) -> dict:
     action = step.get("action", "")
     target = step.get("target", "")
+
+    if action == "send_whatsapp_message":
+        contact = target
+        message_text = step.get("message", "")
+        try:
+            ok, msg = whatsapp_send_message(contact, message_text)
+        except Exception as e:
+            ok, msg = False, str(e)
+        return {"status": "success" if ok else "error", "action": action, "target": target, "message": msg}
+
     handler = ACTIONS.get(action)
     if not handler:
         return {
             "status": "error",
             "action": action,
             "target": target,
-            "message": f"Unknown action '{action}' (windows_agent supports: {list(ACTIONS)})",
+            "message": f"Unknown action '{action}' (windows_agent supports: "
+                       f"{list(ACTIONS) + ['send_whatsapp_message']})",
         }
     try:
         ok, message = handler(target)

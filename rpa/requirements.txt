@@ -3,3 +3,4 @@ uvicorn
 websockets
 openai
 python-dotenv
+pywinauto

@@ -26,6 +26,8 @@ SYSTEM_PROMPT = (
     "- open_os_settings: target is a Windows Settings section, e.g. display, sound, bluetooth, "
     "network, wifi, apps, personalization, update, privacy, accounts, power, storage, system\n"
     "- search_web: target is the search query text; opens it as a web search in the default browser\n"
+    "- send_whatsapp_message: target is the exact contact name as it appears in WhatsApp; also include "
+    "a 'message' key with the message text to send\n"
     "- export_file: target is the compound/run name, for mass spec data exports\n\n"
     "If the command implies multiple steps (e.g. 'open WhatsApp and go to its settings'), "
     "return them as separate steps in order, e.g.:\n"
@@ -37,7 +39,12 @@ SYSTEM_PROMPT = (
     "For 'open <browser> and search <query>', return exactly two steps — one open_app "
     "for the browser, one search_web for the query, e.g.:\n"
     "[{\"action\": \"open_app\", \"target\": \"Microsoft Edge\"}, "
-    "{\"action\": \"search_web\", \"target\": \"KTH Royal Institute of Technology\"}]"
+    "{\"action\": \"search_web\", \"target\": \"KTH Royal Institute of Technology\"}]\n\n"
+    "For 'open whatsapp and text <name> <message>', return exactly two steps — one "
+    "open_app for WhatsApp, one send_whatsapp_message with the contact as target and "
+    "the message text in a separate 'message' key, e.g.:\n"
+    "[{\"action\": \"open_app\", \"target\": \"WhatsApp\"}, "
+    "{\"action\": \"send_whatsapp_message\", \"target\": \"Mohammed Ismail\", \"message\": \"hi\"}]"
 )
 
 TARGET_MACHINE = "PrismaPro_01"
