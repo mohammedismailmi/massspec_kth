@@ -1,18 +1,19 @@
 import os
 import json
+import re
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
-# Load the .env file containing XAI_API_KEY
+# Load the .env file containing OPENROUTER_API_KEY
 load_dotenv()
 
 app = FastAPI()
 
-# Configure the SDK to route to Groq instead of OpenAI
+# Configure the SDK to route to OpenRouter instead of OpenAI
 client = AsyncOpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    base_url="https://openrouter.ai/api/v1"
 )
 
 SYSTEM_PROMPT = (
@@ -85,9 +86,15 @@ async def client_endpoint(websocket: WebSocket):
             command = await websocket.receive_text()
             print(f"[USER COMMAND] {command}")
 
-            # 1. Ask Grok to parse the intent into strict JSON
+            # 1. Ask the LLM to parse the intent into strict JSON
             response = await client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="nvidia/nemotron-3-ultra-550b-a55b:free",
+                extra_headers={
+                    # Optional — OpenRouter uses these for its public leaderboard/analytics,
+                    # not required for the API to work.
+                    "HTTP-Referer": "http://localhost:8000",
+                    "X-Title": "Mass Spec RPA",
+                },
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": command},
@@ -95,8 +102,13 @@ async def client_endpoint(websocket: WebSocket):
                 temperature=0.1,
             )
 
-            structured_command = response.choices[0].message.content.strip()
-            print(f"[GROK PARSED] {structured_command}")
+            raw_content = response.choices[0].message.content.strip()
+            # Nemotron is a reasoning model and may emit a <think>...</think>
+            # trace before the actual JSON — strip it so parsing doesn't break.
+            structured_command = re.sub(
+                r"<think>.*?</think>", "", raw_content, flags=re.DOTALL
+            ).strip()
+            print(f"[LLM PARSED] {structured_command}")
 
             # 2. Route the JSON command to the Mock/Host Agent
             if TARGET_MACHINE in connected_agents:
